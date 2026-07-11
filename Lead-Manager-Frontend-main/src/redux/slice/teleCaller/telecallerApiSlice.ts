@@ -53,8 +53,8 @@ export interface LeadsListResp {
 
 export interface UpdateLeadStatusReq {
   id: string;
-  /** Optional now: server accepts note/schedule-only updates */
-  status?: LeadStatus;
+  /** Optional now: server accepts note/schedule-only updates. Built-in LeadStatus or a custom top-level status slug. */
+  status?: string;
   reason?: string;
   /** ISO string for next follow-up (if scheduling follow-up) */
   followUpDate?: string | null;
@@ -114,7 +114,7 @@ export interface GetMyLeadHistoryResp {
 
 /* -------- Query params -------- */
 export interface GetMyLeadsParams {
-  status?: LeadStatus;
+  status?: string; // built-in LeadStatus or a custom top-level status slug
   q?: string;
   metaFormId?: string;
   page?: number;
@@ -130,6 +130,23 @@ export interface GetMyReportParams {
 
 export interface GetMyRemindersParams {
   tz?: string; // e.g. "Asia/Kolkata"
+}
+
+/* ---- Status reason options (admin-managed quick-select labels) ---- */
+export type StatusReasonBaseStatus = "followup" | "success" | "failed";
+export interface StatusReasonItem {
+  _id: string;
+  baseStatus: StatusReasonBaseStatus;
+  label: string;
+  order?: number;
+}
+
+/* ---- Custom top-level statuses (admin-managed, e.g. "Waiting") ---- */
+export interface CustomStatusItem {
+  _id: string;
+  slug: string;
+  label: string;
+  order?: number;
 }
 
 /* ========================= Slice ========================= */
@@ -226,6 +243,18 @@ const telecallerApi = apiSlice.injectEndpoints({
         "TelecallerDashboard",
       ],
     }),
+
+    /* ---- Status reason quick-select options (admin-managed) ---- */
+    getStatusReasons: builder.query<{ items: StatusReasonItem[] }, void>({
+      query: () => "/leads/status-reasons",
+      providesTags: ["StatusReason"],
+    }),
+
+    /* ---- Custom top-level statuses (admin-managed) ---- */
+    getCustomStatuses: builder.query<{ items: CustomStatusItem[] }, void>({
+      query: () => "/leads/custom-statuses",
+      providesTags: ["CustomStatus"],
+    }),
   }),
   overrideExisting: true,
 });
@@ -243,6 +272,8 @@ export const {
   useGetMyLeadHistoryQuery,
   useLazyGetMyLeadHistoryQuery,
   useAddLeadNoteMutation,
+  useGetStatusReasonsQuery,
+  useGetCustomStatusesQuery,
 } = telecallerApi;
 
 /* 🔁 Alias to match existing imports in some files */

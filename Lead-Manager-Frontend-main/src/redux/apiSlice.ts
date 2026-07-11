@@ -97,7 +97,9 @@ export const apiSlice = createApi({
     'TelecallerDashboard',
     'MetaConfig',
     'MetaForms',
-    'MetaSync'
+    'MetaSync',
+    'StatusReason',
+    'CustomStatus'
 
   ],
   endpoints: () => ({}), // feature slices should inject their own endpoints

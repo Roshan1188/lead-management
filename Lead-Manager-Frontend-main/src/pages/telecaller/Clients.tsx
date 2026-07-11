@@ -37,6 +37,8 @@ import {
   useGetMyLeadHistoryQuery,
   useLazyGetMyLeadHistoryQuery,
   useAddLeadNoteMutation,
+  useGetStatusReasonsQuery,
+  useGetCustomStatusesQuery,
   type Lead,
   type LeadStatus,
   type LeadTimelineEvent,
@@ -92,17 +94,9 @@ const dayHeading = (iso: string) => {
 };
 
 type ViewMode = 'table' | 'card';
-type StatusFilter = 'all' | LeadStatus;
-type ActionStatusOption =
-  | 'followup'
-  | 'success'
-  | 'failed'
-  | 'failed_switch_off'
-  | 'failed_no_response'
-  | 'failed_busy'
-  | 'failed_out_of_range'
-  | 'failed_budget_issue'
-  | 'failed_other';
+type StatusFilter = string; // 'all' | LeadStatus | custom-status slug
+type UpdatableStatus = string; // 'followup' | 'success' | 'failed' | custom-status slug
+const QUICK_REASON_CUSTOM = '__custom__';
 
 // 👇 leadType ko readable banane ke liye helper
 const formatLeadType = (t?: Lead['leadType']) => {
@@ -119,54 +113,20 @@ const formatLeadType = (t?: Lead['leadType']) => {
   }
 };
 
-const FAILED_REASON_OPTIONS = [
-  'Switch off',
-  'no response',
-  'busy',
-  'out of range',
-  'budget issue',
-] as const;
-
-const FAILED_REASON_BY_OPTION: Record<Exclude<ActionStatusOption, 'followup' | 'success' | 'failed'>, string> = {
-  failed_switch_off: 'Switch off',
-  failed_no_response: 'no response',
-  failed_busy: 'busy',
-  failed_out_of_range: 'out of range',
-  failed_budget_issue: 'budget issue',
-};
-
-const FAILED_REASON_DISPLAY_BY_NORMALIZED: Record<string, string> = {
-  'switch off': 'Switch off',
-  'no response': 'No response',
-  busy: 'Busy',
-  'out of range': 'Out of range',
-  'budget issue': 'Budget issue',
-};
-
-const normalizeReason = (value?: string | null) =>
-  String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
-
-const getStatusLabelForLead = (lead: Lead) => {
-  if (lead.status === 'failed') {
-    const normalizedReason = normalizeReason(lead.reason);
-    if (normalizedReason && FAILED_REASON_DISPLAY_BY_NORMALIZED[normalizedReason]) {
-      return FAILED_REASON_DISPLAY_BY_NORMALIZED[normalizedReason];
-    }
-    return 'Failed';
-  }
+const getStatusLabelForLead = (lead: Lead, customStatusMap: Record<string, string> = {}) => {
+  if (lead.status === 'failed') return lead.reason?.trim() || 'Failed';
   if (lead.status === 'followup') return 'Follow Up';
   if (lead.status === 'success') return 'Success';
-  return 'New';
+  if (lead.status === 'initialize') return 'New';
+  return customStatusMap[lead.status as string] || (lead.status as string) || 'New';
 };
 
-const getStatusBadgeClass = (status: LeadStatus) => {
+const getStatusBadgeClass = (status: string) => {
   if (status === 'failed') return 'bg-destructive text-destructive-foreground';
   if (status === 'followup') return 'bg-warning text-warning-foreground';
   if (status === 'success') return 'bg-success text-success-foreground';
-  return 'bg-pending text-pending-foreground';
+  if (status === 'initialize') return 'bg-pending text-pending-foreground';
+  return 'bg-secondary text-secondary-foreground'; // custom top-level status
 };
 
 const getActualMetaLeadDateIso = (lead: Lead) => {
@@ -214,12 +174,25 @@ export default function Clients() {
   // Action modal
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [actionOpen, setActionOpen] = useState(false);
-  const [actionStatus, setActionStatus] = useState<LeadStatus>('followup');
-  const [actionStatusOption, setActionStatusOption] = useState<ActionStatusOption>('followup');
+  const [actionStatus, setActionStatus] = useState<UpdatableStatus>('followup');
+  const [quickReason, setQuickReason] = useState<string>(QUICK_REASON_CUSTOM);
   const [actionReason, setActionReason] = useState('');
   const [actionDate, setActionDate] = useState(''); // YYYY-MM-DD
   const [actionTime, setActionTime] = useState(''); // HH:mm
   const [noteOnly, setNoteOnly] = useState(false);
+
+  const { data: statusReasonsData } = useGetStatusReasonsQuery();
+  const quickReasonOptions = useMemo(
+    () => (statusReasonsData?.items ?? []).filter((o) => o.baseStatus === actionStatus),
+    [statusReasonsData, actionStatus]
+  );
+
+  const { data: customStatusData } = useGetCustomStatusesQuery();
+  const customStatuses = customStatusData?.items ?? [];
+  const customStatusMap = useMemo(
+    () => Object.fromEntries(customStatuses.map((s) => [s.slug, s.label])),
+    [customStatuses]
+  );
 
   // Details modal (+ timeline)
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -309,30 +282,22 @@ export default function Clients() {
     setSelectedLead(lead);
     setNoteOnly(false);
     setActionStatus('followup');
-    setActionStatusOption('followup');
+    setQuickReason(QUICK_REASON_CUSTOM);
     setActionReason('');
     setActionDate('');
     setActionTime('');
     setActionOpen(true);
   };
 
-  const handleActionStatusOptionChange = (value: string) => {
-    const option = value as ActionStatusOption;
-    setActionStatusOption(option);
+  const handleActionStatusChange = (value: string) => {
+    setActionStatus(value as UpdatableStatus);
+    setQuickReason(QUICK_REASON_CUSTOM);
+    setActionReason('');
+  };
 
-    if (option === 'followup' || option === 'success') {
-      setActionStatus(option);
-      setActionReason('');
-      return;
-    }
-
-    setActionStatus('failed');
-    if (option === 'failed' || option === 'failed_other') {
-      setActionReason('');
-      return;
-    }
-
-    setActionReason(FAILED_REASON_BY_OPTION[option as Exclude<ActionStatusOption, 'followup' | 'success' | 'failed' | 'failed_other'>]);
+  const handleQuickReasonChange = (value: string) => {
+    setQuickReason(value);
+    setActionReason(value === QUICK_REASON_CUSTOM ? '' : value);
   };
 
   const handleSubmitAction = async () => {
@@ -492,6 +457,11 @@ export default function Clients() {
               <SelectItem value="followup">Follow Up</SelectItem>
               <SelectItem value="success">Success</SelectItem>
               <SelectItem value="failed">Failed</SelectItem>
+              {customStatuses.map((s) => (
+                <SelectItem key={s._id} value={s.slug}>
+                  {s.label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
 
@@ -565,7 +535,7 @@ export default function Clients() {
               <p className="text-xs text-muted-foreground mb-2">
                 Table shows 4 fields. Use "View More" for full details.
               </p>
-              <div className="rounded-md border overflow-hidden">
+              <div className="rounded-md border overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -619,7 +589,7 @@ export default function Clients() {
                           <TableCell key={col.key}>
                             {col.key === 'status' ? (
                               <Badge className={getStatusBadgeClass(lead.status)}>
-                                {getStatusLabelForLead(lead)}
+                                {getStatusLabelForLead(lead, customStatusMap)}
                               </Badge>
                             ) : (
                               col.render(lead)
@@ -682,6 +652,7 @@ export default function Clients() {
           </Card>
         ) : (
           /* CARD VIEW */
+          <div className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {items.map((lead) => (
               <Card key={lead._id}>
@@ -691,7 +662,7 @@ export default function Clients() {
                       <CardTitle className="text-lg">{lead.name || '—'}</CardTitle>
                       <p className="text-sm text-muted-foreground">{lead.source || 'No source'}</p>
                     </div>
-                    <Badge className={getStatusBadgeClass(lead.status)}>{getStatusLabelForLead(lead)}</Badge>
+                    <Badge className={getStatusBadgeClass(lead.status)}>{getStatusLabelForLead(lead, customStatusMap)}</Badge>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -739,6 +710,34 @@ export default function Clients() {
               </Card>
             ))}
           </div>
+
+          {/* Pagination */}
+          {pages > 1 && (
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-muted-foreground">
+                Page {page} of {pages} • {total} total
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" /> Prev
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page >= pages}
+                  onClick={() => setPage((p) => Math.min(pages, p + 1))}
+                >
+                  Next <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
+          )}
+          </div>
         )}
 
         {/* ---------- Action Modal ---------- */}
@@ -777,20 +776,38 @@ export default function Clients() {
               {!noteOnly && (
                 <div className="space-y-2">
                   <Label>Update Status</Label>
-                  <Select value={actionStatusOption} onValueChange={handleActionStatusOptionChange}>
+                  <Select value={actionStatus} onValueChange={handleActionStatusChange}>
                     <SelectTrigger>
                       <SelectValue placeholder="Choose status" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="followup">Follow Up</SelectItem>
                       <SelectItem value="success">Success</SelectItem>
-                      <SelectItem value="failed">Failed (custom reason)</SelectItem>
-                      <SelectItem value="failed_switch_off">Switch off</SelectItem>
-                      <SelectItem value="failed_no_response">no response</SelectItem>
-                      <SelectItem value="failed_busy">busy</SelectItem>
-                      <SelectItem value="failed_out_of_range">out of range</SelectItem>
-                      <SelectItem value="failed_budget_issue">budget issue</SelectItem>
-                      <SelectItem value="failed_other">Other (custom)</SelectItem>
+                      <SelectItem value="failed">Failed</SelectItem>
+                      {customStatuses.map((s) => (
+                        <SelectItem key={s._id} value={s.slug}>
+                          {s.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {!noteOnly && quickReasonOptions.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Quick reason (optional)</Label>
+                  <Select value={quickReason} onValueChange={handleQuickReasonChange}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a quick reason" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={QUICK_REASON_CUSTOM}>Custom (type below)</SelectItem>
+                      {quickReasonOptions.map((opt) => (
+                        <SelectItem key={opt._id} value={opt.label}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -800,15 +817,10 @@ export default function Clients() {
                 <Label htmlFor="reason">{noteOnly ? 'Note' : 'Reason / Notes'}</Label>
                 <Textarea
                   id="reason"
-                  placeholder={noteOnly ? 'Add a note…' : actionStatusOption === 'failed_other' ? 'Enter custom reason…' : 'Add notes about this interaction…'}
+                  placeholder={noteOnly ? 'Add a note…' : 'Add notes about this interaction…'}
                   value={actionReason}
                   onChange={(e) => setActionReason(e.target.value)}
                 />
-                {!noteOnly && actionStatus === 'failed' && (
-                  <p className="text-xs text-muted-foreground">
-                    Quick failed options: {FAILED_REASON_OPTIONS.join(', ')}
-                  </p>
-                )}
               </div>
 
               {!noteOnly && actionStatus === 'followup' && (
@@ -870,7 +882,7 @@ export default function Clients() {
                       <Label className="text-muted-foreground">Status</Label>
                       <div className="mt-1">
                         <Badge className={getStatusBadgeClass(selectedLead.status)}>
-                          {getStatusLabelForLead(selectedLead)}
+                          {getStatusLabelForLead(selectedLead, customStatusMap)}
                         </Badge>
                       </div>
                     </div>

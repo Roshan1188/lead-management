@@ -1,5 +1,5 @@
 // src/components/AppSidebar.tsx
-import { Home, Users, UserPlus, Upload, BarChart3, User, FileText, Database, LogIn } from 'lucide-react';
+import { Home, Users, UserPlus, Upload, BarChart3, User, FileText, Database, LogIn, ListChecks } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { getRoleFromStorage } from '@/services/authService';
 import {
@@ -31,6 +31,7 @@ export function AppSidebar() {
     { title: 'Leads',         url: '/admin/leads',       icon: Database },
     { title: 'Distribution',  url: '/admin/distribution',icon: FileText },
     { title: 'Reports',       url: '/admin/reports',     icon: BarChart3 },
+    { title: 'Status Options',url: '/admin/status-options', icon: ListChecks },
     { title: 'Profile',       url: '/admin/profile',     icon: User },
   ];
 

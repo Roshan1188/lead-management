@@ -260,9 +260,80 @@ export interface MetaSyncResp {
   }>;
 }
 
+/* ---------------- Status reason options (Update Lead quick-select) ---------------- */
+export type StatusReasonBaseStatus = "followup" | "success" | "failed";
+
+export interface StatusReasonItem {
+  _id: string;
+  baseStatus: StatusReasonBaseStatus;
+  label: string;
+  order?: number;
+  createdAt?: string;
+}
+
+/* ---------------- Custom top-level statuses (e.g. "Waiting") ---------------- */
+export interface CustomStatusItem {
+  _id: string;
+  slug: string;
+  label: string;
+  order?: number;
+  createdAt?: string;
+}
+
 /* ============================ API Slice ============================ */
 const adminApi = apiSlice.injectEndpoints({
   endpoints: (builder) => ({
+    /* -------------------- Status reason options -------------------- */
+    getStatusReasons: builder.query<{ items: StatusReasonItem[] }, void>({
+      query: () => "/admin/status-reasons",
+      providesTags: ["StatusReason"],
+    }),
+
+    createStatusReason: builder.mutation<
+      { message: string; item: StatusReasonItem },
+      { baseStatus: StatusReasonBaseStatus; label: string }
+    >({
+      query: (body) => ({
+        url: "/admin/status-reasons",
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["StatusReason"],
+    }),
+
+    deleteStatusReason: builder.mutation<{ message: string }, string>({
+      query: (id) => ({
+        url: `/admin/status-reasons/${id}`,
+        method: "DELETE",
+      }),
+      invalidatesTags: ["StatusReason"],
+    }),
+
+    /* -------------------- Custom top-level statuses -------------------- */
+    getCustomStatuses: builder.query<{ items: CustomStatusItem[] }, void>({
+      query: () => "/admin/custom-statuses",
+      providesTags: ["CustomStatus"],
+    }),
+
+    createCustomStatus: builder.mutation<
+      { message: string; item: CustomStatusItem },
+      { label: string }
+    >({
+      query: (body) => ({
+        url: "/admin/custom-statuses",
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["CustomStatus"],
+    }),
+
+    deleteCustomStatus: builder.mutation<{ message: string }, string>({
+      query: (id) => ({
+        url: `/admin/custom-statuses/${id}`,
+        method: "DELETE",
+      }),
+      invalidatesTags: ["CustomStatus"],
+    }),
     /* ---------------------- Dashboard ---------------------- */
     getDashboard: builder.query<DashboardResponse, void>({
       query: () => "/admin/dashboard",
@@ -551,6 +622,16 @@ const adminApi = apiSlice.injectEndpoints({
 });
 
 export const {
+  /* status reasons */
+  useGetStatusReasonsQuery,
+  useCreateStatusReasonMutation,
+  useDeleteStatusReasonMutation,
+
+  /* custom top-level statuses */
+  useGetCustomStatusesQuery,
+  useCreateCustomStatusMutation,
+  useDeleteCustomStatusMutation,
+
   /* dashboard */
   useGetDashboardQuery,
 

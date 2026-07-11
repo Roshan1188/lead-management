@@ -16,9 +16,10 @@ const leadSchema = new mongoose.Schema(
     phone: { type: String, trim: true, required: true, index: true },
     email: { type: String, trim: true },
 
+    // NOTE: not a fixed enum — admin can add custom top-level statuses
+    // (see models/CustomStatus.js). Validity is enforced in the routes.
     status: {
       type: String,
-      enum: ["initialize", "followup", "failed", "success"],
       default: "initialize",
       index: true,
     },

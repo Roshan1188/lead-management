@@ -4,7 +4,8 @@ const followUpSchema = new mongoose.Schema(
   {
     lead: { type: mongoose.Schema.Types.ObjectId, ref: "Lead", required: true, index: true },
     telecaller: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
-    status: { type: String, enum: ["initialize", "followup", "failed", "success"], required: true },
+    // Not a fixed enum — admin can add custom top-level statuses (models/CustomStatus.js)
+    status: { type: String, required: true },
     reason: { type: String },
     nextFollowDate: { type: Date },
   },

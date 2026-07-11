@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import Lead from "../models/Lead.js";
 import Followup from "../models/Followup.js";
 import FollowupAudit from "../models/FollowupAudit.js";
+import CustomStatus from "../models/CustomStatus.js";
 import { protect, requireRole } from "../middleware/authMiddleware.js";
 import { getDayRange, parseDate } from "../utils/date.js";
 
@@ -142,9 +143,19 @@ router.get("/leads", protect, requireRole(1), async (req, res) => {
  *  - Followup (activity)
  *  - FollowupAudit (diff of old/new)
  */
+const BUILT_IN_STATUSES = ["initialize", "followup", "success", "failed"];
+
 router.post("/update-status/:id", protect, requireRole(1), async (req, res) => {
   try {
     const { status, reason, followUpDate, note } = req.body;
+
+    if (status) {
+      const allowed = new Set(BUILT_IN_STATUSES);
+      (await CustomStatus.find().select("slug").lean()).forEach((c) => allowed.add(c.slug));
+      if (!allowed.has(status)) {
+        return res.status(400).json({ message: `Invalid status: ${status}` });
+      }
+    }
 
     const lead = await Lead.findOne({
       _id: req.params.id,

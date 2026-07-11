@@ -5,6 +5,8 @@ import User from "../models/User.js";
 import Lead, { BUSINESS_OPTIONS } from "../models/Lead.js";
 import Followup from "../models/Followup.js";
 import MetaConfig from "../models/MetaConfig.js";
+import StatusReason, { STATUS_REASON_BASE_STATUSES } from "../models/StatusReason.js";
+import CustomStatus from "../models/CustomStatus.js";
 import { protect, requireRole } from "../middleware/authMiddleware.js";
 import { distributeLeads } from "../utils/leadDistributor.js";
 import { getDayRange } from "../utils/date.js";
@@ -1295,6 +1297,96 @@ router.get("/reports/lead/:id", protect, requireRole(2), async (req, res) => {
     res.json({ lead, history });
   } catch (e) {
     res.status(500).json({ message: "Lead history error", error: e.message });
+  }
+});
+
+/* ============ Status reason options (Update Lead quick-select) ============ */
+router.get("/status-reasons", protect, requireRole(2), async (_req, res) => {
+  try {
+    const items = await StatusReason.find().sort({ baseStatus: 1, order: 1, createdAt: 1 }).lean();
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ message: "Failed to fetch status reasons", error: e.message });
+  }
+});
+
+router.post("/status-reasons", protect, requireRole(2), async (req, res) => {
+  try {
+    const { baseStatus, label } = req.body;
+    if (!STATUS_REASON_BASE_STATUSES.includes(baseStatus)) {
+      return res.status(400).json({ message: "Invalid baseStatus" });
+    }
+    if (!label || !String(label).trim()) {
+      return res.status(400).json({ message: "Label is required" });
+    }
+    const item = await StatusReason.create({ baseStatus, label: String(label).trim() });
+    res.json({ message: "Created", item });
+  } catch (e) {
+    if (e.code === 11000) {
+      return res.status(409).json({ message: "This option already exists for this status" });
+    }
+    res.status(500).json({ message: "Failed to create status reason", error: e.message });
+  }
+});
+
+router.delete("/status-reasons/:id", protect, requireRole(2), async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!Types.ObjectId.isValid(id)) return res.status(400).json({ message: "invalid id" });
+    await StatusReason.findByIdAndDelete(id);
+    res.json({ message: "Deleted" });
+  } catch (e) {
+    res.status(500).json({ message: "Failed to delete status reason", error: e.message });
+  }
+});
+
+/* ============ Custom top-level statuses (e.g. "Waiting") ============ */
+const BUILT_IN_STATUSES = ["initialize", "followup", "success", "failed"];
+const slugify = (v) =>
+  String(v || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+router.get("/custom-statuses", protect, requireRole(2), async (_req, res) => {
+  try {
+    const items = await CustomStatus.find().sort({ order: 1, createdAt: 1 }).lean();
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ message: "Failed to fetch custom statuses", error: e.message });
+  }
+});
+
+router.post("/custom-statuses", protect, requireRole(2), async (req, res) => {
+  try {
+    const { label } = req.body;
+    if (!label || !String(label).trim()) {
+      return res.status(400).json({ message: "Label is required" });
+    }
+    const slug = slugify(label);
+    if (!slug) return res.status(400).json({ message: "Invalid label" });
+    if (BUILT_IN_STATUSES.includes(slug)) {
+      return res.status(409).json({ message: "This status already exists" });
+    }
+    const item = await CustomStatus.create({ slug, label: String(label).trim() });
+    res.json({ message: "Created", item });
+  } catch (e) {
+    if (e.code === 11000) {
+      return res.status(409).json({ message: "This status already exists" });
+    }
+    res.status(500).json({ message: "Failed to create custom status", error: e.message });
+  }
+});
+
+router.delete("/custom-statuses/:id", protect, requireRole(2), async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!Types.ObjectId.isValid(id)) return res.status(400).json({ message: "invalid id" });
+    await CustomStatus.findByIdAndDelete(id);
+    res.json({ message: "Deleted" });
+  } catch (e) {
+    res.status(500).json({ message: "Failed to delete custom status", error: e.message });
   }
 });
 

@@ -18,6 +18,7 @@ import Leads from './pages/admin/Leads';
 import Distribution from './pages/admin/Distribution';
 import AdminReports from './pages/admin/AdminReports';
 import AdminProfile from './pages/admin/AdminProfile';
+import StatusOptions from './pages/admin/StatusOptions';
 
 /* Telecaller */
 import TelecallerDashboard from './pages/telecaller/TelecallerDashboard';
@@ -101,6 +102,14 @@ const App: React.FC = () => (
               element={
                 <ProtectedRoute requiredRole={2}>
                   <AdminProfile />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/status-options"
+              element={
+                <ProtectedRoute requiredRole={2}>
+                  <StatusOptions />
                 </ProtectedRoute>
               }
             />

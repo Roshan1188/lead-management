@@ -5,11 +5,33 @@ import { parse } from "csv-parse/sync";
 import Lead, { CLIENT_INTEREST_OPTIONS, BUSINESS_OPTIONS } from "../models/Lead.js";
 import Followup from "../models/Followup.js";
 import MetaConfig from "../models/MetaConfig.js";
+import StatusReason from "../models/StatusReason.js";
+import CustomStatus from "../models/CustomStatus.js";
 import { protect /*, requireRole*/ } from "../middleware/authMiddleware.js";
 import { uploadBuffer } from "../utils/uploadBuffer.js";
 
 const upload = multer({ storage: multer.memoryStorage() });
 const router = express.Router();
+
+/* Read-only status reason options (used by admin + telecaller UIs) */
+router.get("/status-reasons", protect, async (_req, res) => {
+  try {
+    const items = await StatusReason.find().sort({ baseStatus: 1, order: 1, createdAt: 1 }).lean();
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ message: "Failed to fetch status reasons", error: e.message });
+  }
+});
+
+/* Read-only custom top-level statuses (used by admin + telecaller UIs) */
+router.get("/custom-statuses", protect, async (_req, res) => {
+  try {
+    const items = await CustomStatus.find().sort({ order: 1, createdAt: 1 }).lean();
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ message: "Failed to fetch custom statuses", error: e.message });
+  }
+});
 
 /* ------------------- helpers ------------------- */
 const ensureAssignedForTelecaller = (payload, user) => {

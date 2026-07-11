@@ -9,9 +9,11 @@ import authRoutes from "./routes/authRoutes.js";
 import adminRoutes, { startMetaAutoSyncJob } from "./routes/adminRoutes.js";
 import telecallerRoutes from "./routes/telecallerRoutes.js";
 import leadRoutes from "./routes/leadRoutes.js";
+import { seedStatusReasons } from "./utils/seedStatusReasons.js";
 
 dotenv.config();
 await connectDB();
+await seedStatusReasons();
 
 const app = express();
 
