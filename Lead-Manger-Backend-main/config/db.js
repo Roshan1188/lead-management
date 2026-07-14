@@ -9,9 +9,14 @@ if (!process.env.VERCEL) {
 }
 
 const connectDB = async () => {
+  // Already connected (warm serverless invocation reusing the same container) — skip.
+  if (mongoose.connection.readyState === 1) return;
+
   try {
     const conn = await mongoose.connect(process.env.MONGO_URI, {
-      autoIndex: true
+      // Indexes are already built; re-verifying them on every cold start is
+      // pure overhead in serverless. Only auto-sync in local dev.
+      autoIndex: !process.env.VERCEL,
     });
     console.log(`✅ MongoDB connected: ${conn.connection.host}`);
   } catch (err) {
