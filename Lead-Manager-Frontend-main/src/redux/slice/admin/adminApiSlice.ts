@@ -49,6 +49,11 @@ export interface DashboardResponse {
     success: number;
     failed: number;
   };
+  customStatusCounts?: Array<{
+    slug: string;
+    label: string;
+    count: number;
+  }>;
 }
 
 /* ---------------- NEW: Admin Summary (rich) ---------------- */
@@ -261,7 +266,9 @@ export interface MetaSyncResp {
 }
 
 /* ---------------- Status reason options (Update Lead quick-select) ---------------- */
-export type StatusReasonBaseStatus = "followup" | "success" | "failed";
+// Built-in statuses ya kisi custom status ka slug (e.g. "call_back")
+export type StatusReasonBaseStatus = string;
+export const BUILT_IN_BASE_STATUSES = ["followup", "success", "failed"] as const;
 
 export interface StatusReasonItem {
   _id: string;

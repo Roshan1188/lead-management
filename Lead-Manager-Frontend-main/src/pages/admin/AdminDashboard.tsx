@@ -10,6 +10,7 @@ import {
   CheckCircle,
   XCircle,
   Clock,
+  Tag,
 } from "lucide-react";
 import { useGetDashboardQuery } from "@/redux/slice/admin/adminApiSlice";
 
@@ -29,7 +30,9 @@ export default function AdminDashboard() {
     const followup = data?.statusCounts?.followup ?? 0;
     const success = data?.statusCounts?.success ?? 0;
     const failed = data?.statusCounts?.failed ?? 0;
-    const totalLeads = initialize + followup + success + failed; // backend returns this as totalClients too
+    const customStatuses = data?.customStatusCounts ?? [];
+    const customTotal = customStatuses.reduce((sum, s) => sum + s.count, 0);
+    const totalLeads = initialize + followup + success + failed + customTotal;
     const successRate =
       totalLeads > 0 ? Math.round((success / totalLeads) * 100) : 0;
 
@@ -38,6 +41,7 @@ export default function AdminDashboard() {
       followup,
       success,
       failed,
+      customStatuses,
       totalLeads,
       totalTelecallers: data?.totalTelecallers ?? 0,
       successRate,
@@ -100,6 +104,13 @@ export default function AdminDashboard() {
       icon: XCircle,
       badgeClass: "bg-rose-600 text-white",
     },
+    // Custom top-level statuses (e.g. Call Back, Waiting)
+    ...totals.customStatuses.map((s) => ({
+      title: s.label,
+      value: isLoading ? "—" : s.count.toString(),
+      icon: Tag,
+      badgeClass: "bg-violet-600 text-white",
+    })),
   ];
 
   return (

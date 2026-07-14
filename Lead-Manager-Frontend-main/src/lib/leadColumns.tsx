@@ -8,6 +8,7 @@ export const LEAD_COLUMNS = [
   "phone",
   "email",
   "status",
+  "journeyStage",
   "clientInterest",
   "leadType",
   "business",
@@ -33,14 +34,61 @@ export const LEAD_DEFAULT_COLUMNS: LeadColumnKey[] = [
   "phone",
   "email",
   "status",
+  "journeyStage",
   "business",
 ];
+
+/* ---------- Client roadmap progress (call → visit → quotation → decision) ---------- */
+const JOURNEY_STAGES = ["call", "visit", "quotation", "decision"] as const;
+const JOURNEY_LABELS: Record<string, string> = {
+  call: "Call",
+  visit: "Visit",
+  quotation: "Quotation",
+  decision: "Decision",
+};
+
+export const renderJourneyProgress = (l: Lead) => {
+  const stage = l.journeyStage || "call";
+  const idx = Math.max(0, JOURNEY_STAGES.indexOf(stage as (typeof JOURNEY_STAGES)[number]));
+  const decided = l.status === "success" ? "yes" : l.status === "failed" ? "no" : null;
+  const doneCount = decided ? JOURNEY_STAGES.length : idx;
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1">
+        {JOURNEY_STAGES.map((s, i) => (
+          <span
+            key={s}
+            title={JOURNEY_LABELS[s]}
+            className={`h-2 w-2 rounded-full ${
+              i < doneCount
+                ? decided === "no" && i === JOURNEY_STAGES.length - 1
+                  ? "bg-destructive"
+                  : "bg-success"
+                : i === idx && !decided
+                ? "bg-primary"
+                : "bg-muted-foreground/25"
+            }`}
+          />
+        ))}
+      </div>
+      <span className="text-xs font-medium whitespace-nowrap">
+        {decided === "yes"
+          ? "Won 🎉"
+          : decided === "no"
+          ? "Lost"
+          : `${JOURNEY_LABELS[stage]} (${idx + 1}/4)`}
+      </span>
+    </div>
+  );
+};
 
 export const LEAD_COLUMN_LABELS: Record<LeadColumnKey, string> = {
   name: "Name",
   phone: "Phone",
   email: "Email",
   status: "Status",
+  journeyStage: "Progress",
   clientInterest: "Interest",
   leadType: "Type",
   business: "Business",
@@ -105,6 +153,11 @@ export const getLeadColumnDefs = (
     key: "status",
     label: LEAD_COLUMN_LABELS.status,
     render: (l) => (l.status ? <StatusBadge status={l.status} /> : "—"),
+  },
+  {
+    key: "journeyStage",
+    label: LEAD_COLUMN_LABELS.journeyStage,
+    render: renderJourneyProgress,
   },
   {
     key: "clientInterest",

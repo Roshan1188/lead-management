@@ -4,7 +4,9 @@ export const STATUS_REASON_BASE_STATUSES = ["followup", "success", "failed"];
 
 const statusReasonSchema = new mongoose.Schema(
   {
-    baseStatus: { type: String, enum: STATUS_REASON_BASE_STATUSES, required: true, index: true },
+    // Built-in statuses (followup / success / failed) OR the slug of an
+    // admin-created custom status (e.g. "call_back", "waiting").
+    baseStatus: { type: String, required: true, trim: true, lowercase: true, index: true },
     label: { type: String, required: true, trim: true },
     order: { type: Number, default: 0 },
   },

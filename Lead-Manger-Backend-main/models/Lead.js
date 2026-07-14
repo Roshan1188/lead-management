@@ -27,6 +27,15 @@ const leadSchema = new mongoose.Schema(
     reason: { type: String },
     followUpDate: { type: Date, index: true },
 
+    // 👇 Client roadmap / journey: call → visit → quotation → decision
+    // Decision outcome is captured via status (success = yes, failed = no).
+    journeyStage: {
+      type: String,
+      enum: ["call", "visit", "quotation", "decision"],
+      default: "call",
+      index: true,
+    },
+
     // 👇 client interest (customer ka interest)
     clientInterest: {
       type: String,

@@ -14,8 +14,9 @@ const FollowupAuditSchema = new mongoose.Schema(
     },
 
     // Diffs (keep optional; fill what changed)
-    prevStatus: { type: String, enum: ["initialize", "followup", "success", "failed"], default: null },
-    newStatus: { type: String, enum: ["initialize", "followup", "success", "failed"], default: null },
+    // Not a fixed enum — admin can add custom top-level statuses (models/CustomStatus.js)
+    prevStatus: { type: String, default: null },
+    newStatus: { type: String, default: null },
 
     prevReason: { type: String, default: null },
     newReason: { type: String, default: null },

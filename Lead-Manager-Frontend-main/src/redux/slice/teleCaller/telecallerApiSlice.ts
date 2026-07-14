@@ -12,6 +12,8 @@ export interface Lead {
   email?: string;
   status: LeadStatus;
   reason?: string | null;
+  /** Client roadmap: call → visit → quotation → decision */
+  journeyStage?: 'call' | 'visit' | 'quotation' | 'decision';
   source?: string | null;
   leadType?: string | null;
   followUpDate?: string | null;
@@ -34,12 +36,19 @@ export interface Lead {
   company?: string; // optional if you store it
 }
 
+export interface CustomStatusCount {
+  slug: string;
+  label: string;
+  count: number;
+}
+
 export interface TelecallerDashboardCounts {
   total: number;
   initialize: number;
   followup: number;
   success: number;
   failed: number;
+  customStatusCounts?: CustomStatusCount[];
 }
 
 export interface LeadsListResp {
@@ -60,6 +69,8 @@ export interface UpdateLeadStatusReq {
   followUpDate?: string | null;
   /** Optional free-text note captured in audit & activity */
   note?: string;
+  /** Client roadmap stage: call | visit | quotation | decision */
+  journeyStage?: string;
 }
 export type UpdateLeadStatusResp = { message: string; lead: Lead } | Lead;
 
@@ -80,6 +91,7 @@ export interface TelecallerSimpleReport {
   followup: number;
   success: number;
   failed: number;
+  customStatusCounts?: CustomStatusCount[];
 }
 
 /* ---- Lead History (timeline) ---- */
@@ -121,6 +133,8 @@ export interface GetMyLeadsParams {
   limit?: number;
   dateFrom?: string;
   dateTo?: string;
+  followUpFrom?: string;
+  followUpTo?: string;
 }
 
 export interface GetMyReportParams {
@@ -132,8 +146,27 @@ export interface GetMyRemindersParams {
   tz?: string; // e.g. "Asia/Kolkata"
 }
 
+export interface GetMyLeadsCalendarParams {
+  from?: string; // YYYY-MM-DD
+  to?: string;   // YYYY-MM-DD
+}
+
+export interface LeadsCalendarDay {
+  date: string; // YYYY-MM-DD
+  followupCount: number;
+  createdCount: number;
+}
+
+export interface LeadsCalendarResp {
+  tz: string;
+  from: string;
+  to: string;
+  days: LeadsCalendarDay[];
+}
+
 /* ---- Status reason options (admin-managed quick-select labels) ---- */
-export type StatusReasonBaseStatus = "followup" | "success" | "failed";
+// Built-in statuses ya custom status slug bhi ho sakta hai
+export type StatusReasonBaseStatus = string;
 export interface StatusReasonItem {
   _id: string;
   baseStatus: StatusReasonBaseStatus;
@@ -170,6 +203,8 @@ const telecallerApi = apiSlice.injectEndpoints({
         if (p?.limit) s.set("limit", String(p.limit));
         if (p?.dateFrom) s.set("dateFrom", p.dateFrom);
         if (p?.dateTo) s.set("dateTo", p.dateTo);
+        if (p?.followUpFrom) s.set("followUpFrom", p.followUpFrom);
+        if (p?.followUpTo) s.set("followUpTo", p.followUpTo);
         const qs = s.toString();
         return `/telecaller/leads${qs ? `?${qs}` : ""}`;
       },
@@ -198,6 +233,18 @@ const telecallerApi = apiSlice.injectEndpoints({
         "TelecallerReminders",
         "TelecallerReport",
       ],
+    }),
+
+    /* ---- Calendar: per-day followup & new-lead counts ---- */
+    getMyLeadsCalendar: builder.query<LeadsCalendarResp, GetMyLeadsCalendarParams | void>({
+      query: (p) => {
+        const s = new URLSearchParams();
+        if (p?.from) s.set("from", p.from);
+        if (p?.to) s.set("to", p.to);
+        const qs = s.toString();
+        return `/telecaller/leads/calendar${qs ? `?${qs}` : ""}`;
+      },
+      providesTags: ["TelecallerLeadList"],
     }),
 
     /* ---- Today reminders (by timezone) ---- */
@@ -267,6 +314,7 @@ export const {
   useUpdateLeadStatusMutation,
   useGetMyRemindersQuery,
   useLazyGetMyRemindersQuery,
+  useGetMyLeadsCalendarQuery,
   useGetMyReportQuery,
   useLazyGetMyReportQuery,
   useGetMyLeadHistoryQuery,

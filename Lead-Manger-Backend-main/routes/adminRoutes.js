@@ -409,10 +409,11 @@ export function startMetaAutoSyncJob() {
 
 /* ======================= DASHBOARD (simple) ======================= */
 router.get("/dashboard", protect, requireRole(2), async (_req, res) => {
-  const [totalClients, totalTelecallers, statusAgg] = await Promise.all([
+  const [totalClients, totalTelecallers, statusAgg, customStatusList] = await Promise.all([
     Lead.countDocuments(),
     User.countDocuments({ role: 1 }),
     Lead.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
+    CustomStatus.find().sort({ order: 1, createdAt: 1 }).lean(),
   ]);
 
   const statusMap = Object.fromEntries(statusAgg.map((x) => [x._id, x.count]));
@@ -425,6 +426,12 @@ router.get("/dashboard", protect, requireRole(2), async (_req, res) => {
       success: statusMap.success || 0,
       failed: statusMap.failed || 0,
     },
+    // Custom top-level statuses with their lead counts (e.g. call_back, waiting)
+    customStatusCounts: customStatusList.map((s) => ({
+      slug: s.slug,
+      label: s.label,
+      count: statusMap[s.slug] || 0,
+    })),
   });
 });
 
@@ -1313,13 +1320,18 @@ router.get("/status-reasons", protect, requireRole(2), async (_req, res) => {
 router.post("/status-reasons", protect, requireRole(2), async (req, res) => {
   try {
     const { baseStatus, label } = req.body;
-    if (!STATUS_REASON_BASE_STATUSES.includes(baseStatus)) {
-      return res.status(400).json({ message: "Invalid baseStatus" });
+    const normalizedBase = String(baseStatus || "").trim().toLowerCase();
+    if (!STATUS_REASON_BASE_STATUSES.includes(normalizedBase)) {
+      // Allow reasons under admin-created custom statuses too.
+      const customExists = await CustomStatus.exists({ slug: normalizedBase });
+      if (!customExists) {
+        return res.status(400).json({ message: "Invalid baseStatus" });
+      }
     }
     if (!label || !String(label).trim()) {
       return res.status(400).json({ message: "Label is required" });
     }
-    const item = await StatusReason.create({ baseStatus, label: String(label).trim() });
+    const item = await StatusReason.create({ baseStatus: normalizedBase, label: String(label).trim() });
     res.json({ message: "Created", item });
   } catch (e) {
     if (e.code === 11000) {
@@ -1383,7 +1395,11 @@ router.delete("/custom-statuses/:id", protect, requireRole(2), async (req, res) 
   try {
     const { id } = req.params;
     if (!Types.ObjectId.isValid(id)) return res.status(400).json({ message: "invalid id" });
-    await CustomStatus.findByIdAndDelete(id);
+    const removed = await CustomStatus.findByIdAndDelete(id);
+    // Clean up any quick-reason options that belonged to this custom status.
+    if (removed?.slug) {
+      await StatusReason.deleteMany({ baseStatus: removed.slug });
+    }
     res.json({ message: "Deleted" });
   } catch (e) {
     res.status(500).json({ message: "Failed to delete custom status", error: e.message });

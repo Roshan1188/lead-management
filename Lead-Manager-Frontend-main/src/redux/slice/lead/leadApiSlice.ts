@@ -53,6 +53,8 @@ export interface Lead {
   email?: string;
   status?: LeadStatus;
   reason?: string;
+  /** Client roadmap: call → visit → quotation → decision */
+  journeyStage?: "call" | "visit" | "quotation" | "decision";
   followUpDate?: string | null;
   assignedTo?: string | RefUser | null;
   createdBy?: string | RefUser | null;

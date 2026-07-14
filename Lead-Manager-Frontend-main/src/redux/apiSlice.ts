@@ -55,7 +55,7 @@ const BASE_HOST = (() => {
   if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
     return 'http://localhost:4000';
   }
-  return 'https://lead-manger-backend.vercel.app';
+  return 'https://lead-manger-backend-app.vercel.app';
 })().replace(/\/+$/, ''); // strip trailing slash
 
 // Final base for RTKQ calls → e.g. https://host.xyz/api/v1

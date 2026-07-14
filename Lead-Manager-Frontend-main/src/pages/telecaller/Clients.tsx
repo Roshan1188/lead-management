@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   Table as TableIcon,
   LayoutGrid,
+  CalendarDays,
   Search,
   Eye,
   ChevronLeft,
@@ -24,10 +25,16 @@ import {
   XCircle,
   History,
   X,
+  Phone,
+  MapPin,
+  FileText,
+  ThumbsUp,
+  ThumbsDown,
+  Check,
+  UserPlus,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { useLeadColumnPrefs } from '@/hooks/useLeadColumnPrefs';
-import { getLeadColumnDefs } from '@/lib/leadColumns';
+import { getLeadColumnDefs, renderJourneyProgress } from '@/lib/leadColumns';
 
 // RTK Query hooks & types
 import {
@@ -39,6 +46,7 @@ import {
   useAddLeadNoteMutation,
   useGetStatusReasonsQuery,
   useGetCustomStatusesQuery,
+  useGetMyLeadsCalendarQuery,
   type Lead,
   type LeadStatus,
   type LeadTimelineEvent,
@@ -55,6 +63,28 @@ const toISOFromDateTime = (date?: string, time?: string) => {
   const dt = new Date(`${date}T${t}:00`);
   return dt.toISOString();
 };
+
+const toDateStr = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** Build a 6-week (42 cell) grid for the given month, starting on Sunday. */
+function buildMonthGrid(monthDate: Date): Date[] {
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const firstOfMonth = new Date(year, month, 1);
+  const gridStart = new Date(year, month, 1 - firstOfMonth.getDay());
+  return Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(gridStart);
+    d.setDate(gridStart.getDate() + i);
+    return d;
+  });
+}
 
 function useDebounce<T>(value: T, delay = 300) {
   const [debounced, setDebounced] = useState(value);
@@ -93,10 +123,15 @@ const dayHeading = (iso: string) => {
   return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
-type ViewMode = 'table' | 'card';
+type ViewMode = 'table' | 'card' | 'calendar';
 type StatusFilter = string; // 'all' | LeadStatus | custom-status slug
 type UpdatableStatus = string; // 'followup' | 'success' | 'failed' | custom-status slug
 const QUICK_REASON_CUSTOM = '__custom__';
+const BUILT_IN_STATUSES = ['initialize', 'followup', 'success', 'failed'];
+/** Custom top-level statuses (e.g. "call back", "waiting") behave like follow-ups
+ *  and also need a scheduled date/time. */
+const statusNeedsFollowUpDate = (s: string) =>
+  s === 'followup' || !BUILT_IN_STATUSES.includes(s);
 
 // 👇 leadType ko readable banane ke liye helper
 const formatLeadType = (t?: Lead['leadType']) => {
@@ -120,6 +155,17 @@ const getStatusLabelForLead = (lead: Lead, customStatusMap: Record<string, strin
   if (lead.status === 'initialize') return 'New';
   return customStatusMap[lead.status as string] || (lead.status as string) || 'New';
 };
+
+/* ---------------- Client Roadmap (journey stages) ---------------- */
+type JourneyStage = 'call' | 'visit' | 'quotation' | 'decision';
+const JOURNEY_STEPS: Array<{ key: JourneyStage; label: string; icon: typeof Phone }> = [
+  { key: 'call', label: 'Call', icon: Phone },
+  { key: 'visit', label: 'Visit', icon: MapPin },
+  { key: 'quotation', label: 'Quotation', icon: FileText },
+  { key: 'decision', label: 'Decision', icon: Check },
+];
+const stageIndex = (s?: string) =>
+  Math.max(0, JOURNEY_STEPS.findIndex((x) => x.key === (s || 'call')));
 
 const getStatusBadgeClass = (status: string) => {
   if (status === 'failed') return 'bg-destructive text-destructive-foreground';
@@ -167,6 +213,15 @@ export default function Clients() {
   const debouncedQ = useDebounce(q, 350);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [followUpQuick, setFollowUpQuick] = useState<'none' | 'today' | 'tomorrow'>('none');
+
+  // Calendar view state
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  });
+  const [calendarDayDialogDate, setCalendarDayDialogDate] = useState<string | null>(null);
+  const [calendarDayTab, setCalendarDayTab] = useState<'followup' | 'new'>('followup');
 
   const [page, setPage] = useState(1);
   const [limit] = useState(10);
@@ -204,6 +259,16 @@ export default function Clients() {
 
   const { toast } = useToast();
 
+  /* ---------- Follow-up quick filter (Today / Tomorrow) ---------- */
+  const followUpRange = useMemo(() => {
+    if (followUpQuick === 'none') return { from: undefined, to: undefined };
+    const now = new Date();
+    const target = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (followUpQuick === 'tomorrow') target.setDate(target.getDate() + 1);
+    const dateStr = toDateStr(target);
+    return { from: dateStr, to: dateStr };
+  }, [followUpQuick]);
+
   /* ---------- Data ---------- */
   const {
     data,
@@ -221,6 +286,8 @@ export default function Clients() {
       limit,
       dateFrom: dateFrom || undefined,
       dateTo: dateTo || undefined,
+      followUpFrom: followUpRange.from,
+      followUpTo: followUpRange.to,
     },
     { refetchOnMountOrArgChange: true }
   );
@@ -228,6 +295,48 @@ export default function Clients() {
   const [triggerList] = useLazyGetMyLeadsQuery();
   const [updateStatus, { isLoading: isUpdating }] = useUpdateLeadStatusMutation();
   const [addNote, { isLoading: isAddingNote }] = useAddLeadNoteMutation();
+
+  /* ---------- Calendar view data ---------- */
+  const calendarRange = useMemo(() => {
+    const start = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), 1);
+    const end = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0);
+    return { from: toDateStr(start), to: toDateStr(end) };
+  }, [calendarMonth]);
+
+  const { data: calendarData, isFetching: calendarLoading } = useGetMyLeadsCalendarQuery(
+    calendarRange,
+    { skip: viewMode !== 'calendar' }
+  );
+  const calendarCountsByDate = useMemo(() => {
+    const map: Record<string, { followupCount: number; createdCount: number }> = {};
+    (calendarData?.days ?? []).forEach((d) => {
+      map[d.date] = { followupCount: d.followupCount, createdCount: d.createdCount };
+    });
+    return map;
+  }, [calendarData]);
+
+  const [triggerDayLeads, { data: dayLeadsData, isFetching: dayLeadsLoading }] =
+    useLazyGetMyLeadsQuery();
+
+  const openCalendarDay = (dateStr: string, tab: 'followup' | 'new') => {
+    setCalendarDayDialogDate(dateStr);
+    setCalendarDayTab(tab);
+    if (tab === 'followup') {
+      triggerDayLeads({ followUpFrom: dateStr, followUpTo: dateStr, limit: 100 });
+    } else {
+      triggerDayLeads({ dateFrom: dateStr, dateTo: dateStr, limit: 100 });
+    }
+  };
+
+  const switchCalendarDayTab = (tab: 'followup' | 'new') => {
+    if (!calendarDayDialogDate) return;
+    setCalendarDayTab(tab);
+    if (tab === 'followup') {
+      triggerDayLeads({ followUpFrom: calendarDayDialogDate, followUpTo: calendarDayDialogDate, limit: 100 });
+    } else {
+      triggerDayLeads({ dateFrom: calendarDayDialogDate, dateTo: calendarDayDialogDate, limit: 100 });
+    }
+  };
 
   const {
     data: historyData,
@@ -258,15 +367,12 @@ export default function Clients() {
   }, [formOptions]);
   const total = data?.total ?? 0;
   const pages = data?.pages ?? 1;
-  const { visibleColumns } = useLeadColumnPrefs();
   const leadColumns = useMemo(() => getLeadColumnDefs(), []);
-  const visibleLeadColumnDefs = useMemo(
-    () => leadColumns.filter((c) => visibleColumns.includes(c.key)),
-    [leadColumns, visibleColumns]
-  );
+  // Telecaller quick-view: last updated note instead of email.
+  const TABLE_COLUMN_KEYS = ['name', 'phone', 'reason', 'status'] as const;
   const tableLeadColumnDefs = useMemo(
-    () => visibleLeadColumnDefs.slice(0, 4),
-    [visibleLeadColumnDefs]
+    () => TABLE_COLUMN_KEYS.map((key) => leadColumns.find((c) => c.key === key)).filter(Boolean) as typeof leadColumns,
+    [leadColumns]
   );
 
   /* ---------- Handlers ---------- */
@@ -341,7 +447,7 @@ export default function Clients() {
     }
 
     // Status update path
-    if (actionStatus === 'followup' && !actionDate) {
+    if (statusNeedsFollowUpDate(actionStatus) && !actionDate) {
       toast({
         title: 'Pick follow-up date',
         description: 'Please select a date for follow-up.',
@@ -359,7 +465,9 @@ export default function Clients() {
       return;
     }
 
-    const followUpISO = actionStatus === 'followup' ? toISOFromDateTime(actionDate, actionTime) : null;
+    const followUpISO = statusNeedsFollowUpDate(actionStatus)
+      ? toISOFromDateTime(actionDate, actionTime)
+      : null;
 
     try {
       await updateStatus({
@@ -393,10 +501,58 @@ export default function Clients() {
     }
   };
 
+  /* ---------- Client roadmap handlers ---------- */
+  const handleStageChange = async (stage: JourneyStage) => {
+    if (!selectedLead) return;
+    try {
+      await updateStatus({ id: selectedLead._id, journeyStage: stage }).unwrap();
+      setSelectedLead({ ...selectedLead, journeyStage: stage });
+      await refetchHistory();
+      toast({ title: 'Stage updated', description: `Roadmap moved to "${stage}".` });
+    } catch (e: any) {
+      toast({
+        title: 'Update failed',
+        description: e?.data?.message || e?.message || 'Please try again.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleDecision = async (yes: boolean) => {
+    if (!selectedLead) return;
+    try {
+      await updateStatus({
+        id: selectedLead._id,
+        status: yes ? 'success' : 'failed',
+        reason: yes ? undefined : 'Client declined after quotation',
+        journeyStage: 'decision',
+      }).unwrap();
+      setSelectedLead({
+        ...selectedLead,
+        journeyStage: 'decision',
+        status: (yes ? 'success' : 'failed') as Lead['status'],
+        reason: yes ? selectedLead.reason : 'Client declined after quotation',
+      });
+      await refetchHistory();
+      toast({
+        title: yes ? 'Client confirmed 🎉' : 'Marked as failed',
+        description: yes
+          ? 'Lead marked as Success.'
+          : 'Lead marked as Failed (client said no).',
+      });
+    } catch (e: any) {
+      toast({
+        title: 'Update failed',
+        description: e?.data?.message || e?.message || 'Please try again.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   // When filters change, go back to page 1
   useEffect(() => {
     setPage(1);
-  }, [status, formFilter, debouncedQ]);
+  }, [status, formFilter, debouncedQ, followUpQuick]);
 
   const headerRight = useMemo(
     () => (
@@ -416,6 +572,14 @@ export default function Clients() {
           title="Card view"
         >
           <LayoutGrid className="h-4 w-4" />
+        </Button>
+        <Button
+          variant={viewMode === 'calendar' ? 'default' : 'outline'}
+          size="icon"
+          onClick={() => setViewMode('calendar')}
+          title="Calendar view"
+        >
+          <CalendarDays className="h-4 w-4" />
         </Button>
       </div>
     ),
@@ -486,6 +650,29 @@ export default function Clients() {
           </Button>
         </div>
 
+        {/* Follow-up Quick Filter */}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant={followUpQuick === 'today' ? 'default' : 'outline'}
+            onClick={() => setFollowUpQuick((v) => (v === 'today' ? 'none' : 'today'))}
+          >
+            <Clock4 className="h-4 w-4 mr-1" /> Today's Follow-ups
+          </Button>
+          <Button
+            size="sm"
+            variant={followUpQuick === 'tomorrow' ? 'default' : 'outline'}
+            onClick={() => setFollowUpQuick((v) => (v === 'tomorrow' ? 'none' : 'tomorrow'))}
+          >
+            <Clock4 className="h-4 w-4 mr-1" /> Tomorrow's Follow-ups
+          </Button>
+          {followUpQuick !== 'none' && (
+            <Button variant="ghost" size="sm" onClick={() => setFollowUpQuick('none')}>
+              <X className="h-4 w-4 mr-1" /> Clear
+            </Button>
+          )}
+        </div>
+
         {/* Date Range Filter */}
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
@@ -528,8 +715,108 @@ export default function Clients() {
           </Card>
         )}
 
+        {/* CALENDAR VIEW */}
+        {viewMode === 'calendar' && (
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between mb-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setCalendarMonth(
+                      (m) => new Date(m.getFullYear(), m.getMonth() - 1, 1)
+                    )
+                  }
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" /> Prev
+                </Button>
+                <div className="text-lg font-semibold">
+                  {calendarMonth.toLocaleDateString(undefined, {
+                    month: 'long',
+                    year: 'numeric',
+                  })}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setCalendarMonth(
+                      (m) => new Date(m.getFullYear(), m.getMonth() + 1, 1)
+                    )
+                  }
+                >
+                  Next <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-7 text-xs font-medium text-muted-foreground mb-1">
+                {WEEKDAY_LABELS.map((w) => (
+                  <div key={w} className="py-1 text-center">
+                    {w}
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-7 gap-1">
+                {buildMonthGrid(calendarMonth).map((d, idx) => {
+                  const dateStr = toDateStr(d);
+                  const inMonth = d.getMonth() === calendarMonth.getMonth();
+                  const isToday = dateStr === toDateStr(new Date());
+                  const counts = calendarCountsByDate[dateStr];
+                  return (
+                    <div
+                      key={idx}
+                      className={`min-h-[86px] rounded-md border p-1.5 text-xs ${
+                        inMonth ? 'bg-background' : 'bg-muted/30 text-muted-foreground'
+                      } ${isToday ? 'border-primary ring-1 ring-primary' : ''}`}
+                    >
+                      <div className="mb-1 font-medium">{d.getDate()}</div>
+                      {calendarLoading && inMonth ? (
+                        <div className="h-3 w-10 bg-muted animate-pulse rounded" />
+                      ) : (
+                        <div className="space-y-1">
+                          {counts?.followupCount ? (
+                            <button
+                              type="button"
+                              onClick={() => openCalendarDay(dateStr, 'followup')}
+                              className="flex w-full items-center gap-1 rounded bg-warning/20 px-1 py-0.5 text-warning-foreground hover:bg-warning/30"
+                              title="Follow-ups due"
+                            >
+                              <Clock4 className="h-3 w-3" /> {counts.followupCount}
+                            </button>
+                          ) : null}
+                          {counts?.createdCount ? (
+                            <button
+                              type="button"
+                              onClick={() => openCalendarDay(dateStr, 'new')}
+                              className="flex w-full items-center gap-1 rounded bg-blue-500/15 px-1 py-0.5 text-blue-700 dark:text-blue-300 hover:bg-blue-500/25"
+                              title="New leads received"
+                            >
+                              <UserPlus className="h-3 w-3" /> {counts.createdCount}
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <Clock4 className="h-3.5 w-3.5" /> Follow-ups due that day
+                </span>
+                <span className="flex items-center gap-1">
+                  <UserPlus className="h-3.5 w-3.5" /> New leads received that day
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* TABLE VIEW */}
-        {viewMode === 'table' ? (
+        {viewMode !== 'calendar' && (viewMode === 'table' ? (
           <Card>
             <CardContent className="pt-6">
               <p className="text-xs text-muted-foreground mb-2">
@@ -542,9 +829,8 @@ export default function Clients() {
                       {tableLeadColumnDefs.map((col) => (
                         <TableHead key={col.key}>{col.label}</TableHead>
                       ))}
-                      <TableHead>Lead Date</TableHead>
-                      <TableHead>Fetched At</TableHead>
-                      <TableHead>Form</TableHead>
+                      <TableHead>Next Follow-up</TableHead>
+                      <TableHead>Progress</TableHead>
                       <TableHead className="w-[220px]">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -564,9 +850,6 @@ export default function Clients() {
                             <div className="h-4 w-28 bg-muted animate-pulse rounded" />
                           </TableCell>
                           <TableCell>
-                            <div className="h-4 w-28 bg-muted animate-pulse rounded" />
-                          </TableCell>
-                          <TableCell>
                             <div className="h-8 w-28 bg-muted animate-pulse rounded" />
                           </TableCell>
                         </TableRow>
@@ -575,7 +858,7 @@ export default function Clients() {
                     {!isLoading && !isFetching && items.length === 0 && (
                       <TableRow>
                         <TableCell
-                          colSpan={tableLeadColumnDefs.length + 4}
+                          colSpan={tableLeadColumnDefs.length + 3}
                           className="text-center text-sm text-muted-foreground py-10"
                         >
                           No leads found.
@@ -596,15 +879,10 @@ export default function Clients() {
                             )}
                           </TableCell>
                         ))}
-                        <TableCell>
-                          <div className="text-sm">{getLeadDate(lead)}</div>
+                        <TableCell className="whitespace-nowrap text-sm">
+                          {lead.followUpDate ? toLocalDateTime(lead.followUpDate) : '—'}
                         </TableCell>
-                        <TableCell>
-                          <div className="text-sm">{getLeadFetchedDate(lead)}</div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm">{getLeadFormName(lead, formNameById)}</div>
-                        </TableCell>
+                        <TableCell>{renderJourneyProgress(lead as any)}</TableCell>
                         <TableCell>
                           <div className="flex gap-2">
                             <Button size="sm" variant="outline" onClick={() => handleViewDetails(lead)}>
@@ -682,20 +960,12 @@ export default function Clients() {
                       {formatLeadType(lead.leadType)}
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Follow-up:</span>{' '}
-                      {toLocalDate(lead.followUpDate)}
+                      <span className="text-muted-foreground">Next Follow-up:</span>{' '}
+                      {lead.followUpDate ? toLocalDateTime(lead.followUpDate) : '—'}
                     </div>
-                    <div>
-                      <span className="text-muted-foreground">Lead Date:</span>{' '}
-                      {getLeadDate(lead)}
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Fetched At:</span>{' '}
-                      {getLeadFetchedDate(lead)}
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Form:</span>{' '}
-                      {getLeadFormName(lead, formNameById)}
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground">Progress:</span>{' '}
+                      {renderJourneyProgress(lead as any)}
                     </div>
                   </div>
                   <div className="flex gap-2">
@@ -738,7 +1008,7 @@ export default function Clients() {
             </div>
           )}
           </div>
-        )}
+        ))}
 
         {/* ---------- Action Modal ---------- */}
         <Dialog open={actionOpen} onOpenChange={setActionOpen}>
@@ -823,7 +1093,7 @@ export default function Clients() {
                 />
               </div>
 
-              {!noteOnly && actionStatus === 'followup' && (
+              {!noteOnly && statusNeedsFollowUpDate(actionStatus) && (
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-2">
                     <Label htmlFor="followup-date">Follow-up Date</Label>
@@ -864,10 +1134,110 @@ export default function Clients() {
 
         {/* ---------- Details Modal (with Grouped Timeline) ---------- */}
         <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-          <DialogContent className="max-w-4xl">
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Lead Details & Activity</DialogTitle>
             </DialogHeader>
+
+            {selectedLead && (() => {
+              const currentIdx = stageIndex(selectedLead.journeyStage);
+              const decided =
+                selectedLead.status === 'success'
+                  ? 'yes'
+                  : selectedLead.status === 'failed'
+                  ? 'no'
+                  : null;
+              return (
+                <div className="mb-2 rounded-xl border bg-muted/30 p-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <p className="text-sm font-semibold">Client Roadmap</p>
+                    {decided && (
+                      <Badge
+                        className={
+                          decided === 'yes'
+                            ? 'bg-success text-success-foreground'
+                            : 'bg-destructive text-destructive-foreground'
+                        }
+                      >
+                        {decided === 'yes' ? 'Client said YES ✓' : 'Client said NO'}
+                      </Badge>
+                    )}
+                  </div>
+
+                  {/* Stepper */}
+                  <div className="flex items-center">
+                    {JOURNEY_STEPS.map((step, idx) => {
+                      const Icon = step.icon;
+                      const done = idx < currentIdx || (idx === currentIdx && idx === JOURNEY_STEPS.length - 1 && !!decided);
+                      const active = idx === currentIdx && !done;
+                      return (
+                        <div key={step.key} className="flex flex-1 items-center last:flex-none">
+                          <button
+                            type="button"
+                            disabled={isUpdating || step.key === 'decision'}
+                            onClick={() => step.key !== 'decision' && handleStageChange(step.key)}
+                            title={step.key === 'decision' ? 'Use Yes / No buttons below' : `Move to ${step.label}`}
+                            className="group flex flex-col items-center gap-1.5 focus:outline-none"
+                          >
+                            <span
+                              className={`flex h-10 w-10 items-center justify-center rounded-full border-2 transition-colors ${
+                                done
+                                  ? 'border-success bg-success text-success-foreground'
+                                  : active
+                                  ? 'border-primary bg-primary text-primary-foreground'
+                                  : 'border-muted-foreground/30 bg-background text-muted-foreground group-hover:border-primary/50'
+                              }`}
+                            >
+                              {done ? <Check className="h-5 w-5" /> : <Icon className="h-5 w-5" />}
+                            </span>
+                            <span
+                              className={`text-xs font-medium ${
+                                done || active ? 'text-foreground' : 'text-muted-foreground'
+                              }`}
+                            >
+                              {step.label}
+                            </span>
+                          </button>
+                          {idx < JOURNEY_STEPS.length - 1 && (
+                            <div
+                              className={`mx-2 mb-5 h-0.5 flex-1 rounded ${
+                                idx < currentIdx ? 'bg-success' : 'bg-muted-foreground/20'
+                              }`}
+                            />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Decision buttons — show when quotation stage reached and not yet decided */}
+                  {currentIdx >= 2 && !decided && (
+                    <div className="mt-4 flex items-center gap-2 border-t pt-3">
+                      <p className="mr-auto text-xs text-muted-foreground">
+                        Quotation ke baad client ka decision:
+                      </p>
+                      <Button
+                        size="sm"
+                        disabled={isUpdating}
+                        className="gap-1.5 bg-success text-success-foreground hover:bg-success/90"
+                        onClick={() => handleDecision(true)}
+                      >
+                        <ThumbsUp className="h-4 w-4" /> Yes — Continue
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={isUpdating}
+                        className="gap-1.5"
+                        onClick={() => handleDecision(false)}
+                      >
+                        <ThumbsDown className="h-4 w-4" /> No — Failed
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {selectedLead && (
               <div className="grid lg:grid-cols-[1fr_1.25fr] gap-6">
@@ -1070,6 +1440,90 @@ export default function Clients() {
                 </div>
               </div>
             )}
+          </DialogContent>
+        </Dialog>
+
+        {/* ---------- Calendar Day Detail Modal ---------- */}
+        <Dialog
+          open={!!calendarDayDialogDate}
+          onOpenChange={(open) => !open && setCalendarDayDialogDate(null)}
+        >
+          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>
+                {calendarDayDialogDate
+                  ? new Date(calendarDayDialogDate).toLocaleDateString(undefined, {
+                      weekday: 'long',
+                      month: 'long',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })
+                  : ''}
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="flex gap-2">
+              <TimelineChip
+                active={calendarDayTab === 'followup'}
+                onClick={() => switchCalendarDayTab('followup')}
+              >
+                <Clock4 className="h-3.5 w-3.5 mr-1" /> Follow-ups Due
+              </TimelineChip>
+              <TimelineChip
+                active={calendarDayTab === 'new'}
+                onClick={() => switchCalendarDayTab('new')}
+              >
+                <UserPlus className="h-3.5 w-3.5 mr-1" /> New Leads
+              </TimelineChip>
+            </div>
+
+            <div className="rounded-md border overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Phone</TableHead>
+                    <TableHead>Status</TableHead>
+                    {calendarDayTab === 'followup' && <TableHead>Follow-up Time</TableHead>}
+                    <TableHead>Notes</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {dayLeadsLoading && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-6">
+                        Loading…
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {!dayLeadsLoading && (dayLeadsData?.items?.length ?? 0) === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-6">
+                        No leads found for this day.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {!dayLeadsLoading &&
+                    (dayLeadsData?.items ?? []).map((lead) => (
+                      <TableRow key={lead._id}>
+                        <TableCell>{lead.name || '—'}</TableCell>
+                        <TableCell>{lead.phone || '—'}</TableCell>
+                        <TableCell>
+                          <Badge className={getStatusBadgeClass(lead.status)}>
+                            {getStatusLabelForLead(lead, customStatusMap)}
+                          </Badge>
+                        </TableCell>
+                        {calendarDayTab === 'followup' && (
+                          <TableCell>{toLocalDateTime(lead.followUpDate)}</TableCell>
+                        )}
+                        <TableCell className="max-w-[220px] whitespace-normal text-sm text-muted-foreground">
+                          {lead.reason?.trim() || '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                </TableBody>
+              </Table>
+            </div>
           </DialogContent>
         </Dialog>
       </div>

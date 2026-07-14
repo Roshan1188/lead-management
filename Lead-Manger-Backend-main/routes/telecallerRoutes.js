@@ -28,22 +28,27 @@ const getClientMeta = (req) => ({
 /* ====================== Dashboard Stats (telecaller) ====================== */
 router.get("/dashboard", protect, requireRole(1), async (req, res) => {
   try {
-    const agg = await Lead.aggregate([
-      { $match: { assignedTo: new mongoose.Types.ObjectId(req.user._id) } },
-      { $group: { _id: "$status", count: { $sum: 1 } } },
+    const [agg, customStatusList] = await Promise.all([
+      Lead.aggregate([
+        { $match: { assignedTo: new mongoose.Types.ObjectId(req.user._id) } },
+        { $group: { _id: "$status", count: { $sum: 1 } } },
+      ]),
+      CustomStatus.find().sort({ order: 1, createdAt: 1 }).lean(),
     ]);
 
     const map = Object.fromEntries(agg.map((x) => [x._id, x.count]));
+    const customStatusCounts = customStatusList.map((s) => ({
+      slug: s.slug,
+      label: s.label,
+      count: map[s.slug] || 0,
+    }));
     res.json({
-      total:
-        (map.initialize || 0) +
-        (map.followup || 0) +
-        (map.success || 0) +
-        (map.failed || 0),
+      total: agg.reduce((sum, x) => sum + x.count, 0),
       initialize: map.initialize || 0,
       followup: map.followup || 0,
       success: map.success || 0,
       failed: map.failed || 0,
+      customStatusCounts,
     });
   } catch (e) {
     res.status(500).json({ message: "Dashboard error", error: e.message });
@@ -53,7 +58,7 @@ router.get("/dashboard", protect, requireRole(1), async (req, res) => {
 /* ====================== List my leads with filters ====================== */
 router.get("/leads", protect, requireRole(1), async (req, res) => {
   try {
-    const { status, q, metaFormId, dateFrom, dateTo } = req.query;
+    const { status, q, metaFormId, dateFrom, dateTo, followUpFrom, followUpTo } = req.query;
     const page = clampInt(req.query.page, 1, 1, 10_000);
     const limit = clampInt(req.query.limit, 20, 1, 100);
 
@@ -69,6 +74,15 @@ router.get("/leads", protect, requireRole(1), async (req, res) => {
         const end = new Date(dateTo);
         end.setHours(23, 59, 59, 999);
         filter.createdAt.$lte = end;
+      }
+    }
+    if (followUpFrom || followUpTo) {
+      filter.followUpDate = {};
+      if (followUpFrom) filter.followUpDate.$gte = new Date(followUpFrom);
+      if (followUpTo) {
+        const end = new Date(followUpTo);
+        end.setHours(23, 59, 59, 999);
+        filter.followUpDate.$lte = end;
       }
     }
     if (q && String(q).trim()) {
@@ -147,7 +161,12 @@ const BUILT_IN_STATUSES = ["initialize", "followup", "success", "failed"];
 
 router.post("/update-status/:id", protect, requireRole(1), async (req, res) => {
   try {
-    const { status, reason, followUpDate, note } = req.body;
+    const { status, reason, followUpDate, note, journeyStage } = req.body;
+
+    const JOURNEY_STAGES = ["call", "visit", "quotation", "decision"];
+    if (journeyStage && !JOURNEY_STAGES.includes(journeyStage)) {
+      return res.status(400).json({ message: `Invalid journeyStage: ${journeyStage}` });
+    }
 
     if (status) {
       const allowed = new Set(BUILT_IN_STATUSES);
@@ -174,6 +193,10 @@ router.post("/update-status/:id", protect, requireRole(1), async (req, res) => {
 
     if (status && status !== prevStatus) {
       lead.status = status;
+      changed = true;
+    }
+    if (journeyStage && journeyStage !== lead.journeyStage) {
+      lead.journeyStage = journeyStage;
       changed = true;
     }
     if (typeof reason !== "undefined" && reason !== prevReason) {
@@ -316,6 +339,71 @@ router.get("/reminders", protect, requireRole(1), async (req, res) => {
   }
 });
 
+/* ============ Calendar view: per-day followup & new-lead counts ============ */
+router.get("/leads/calendar", protect, requireRole(1), async (req, res) => {
+  try {
+    const tz =
+      (req.query.tz && String(req.query.tz)) ||
+      process.env.APP_TIMEZONE ||
+      "Asia/Kolkata";
+    const from = parseDate(req.query.from) || new Date(Date.now() - 30 * 86400000);
+    const to = parseDate(req.query.to) || new Date();
+    to.setHours(23, 59, 59, 999);
+
+    const telecallerObjectId = new mongoose.Types.ObjectId(req.user._id);
+
+    const [followupAgg, createdAgg] = await Promise.all([
+      Lead.aggregate([
+        {
+          $match: {
+            assignedTo: telecallerObjectId,
+            followUpDate: { $gte: from, $lte: to },
+          },
+        },
+        {
+          $group: {
+            _id: { $dateToString: { format: "%Y-%m-%d", date: "$followUpDate", timezone: tz } },
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+      Lead.aggregate([
+        {
+          $match: {
+            assignedTo: telecallerObjectId,
+            createdAt: { $gte: from, $lte: to },
+          },
+        },
+        {
+          $group: {
+            _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: tz } },
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+    ]);
+
+    const followupMap = Object.fromEntries(followupAgg.map((x) => [x._id, x.count]));
+    const createdMap = Object.fromEntries(createdAgg.map((x) => [x._id, x.count]));
+    const dates = new Set([...Object.keys(followupMap), ...Object.keys(createdMap)]);
+
+    res.json({
+      tz,
+      from,
+      to,
+      days: Array.from(dates)
+        .sort()
+        .map((date) => ({
+          date,
+          followupCount: followupMap[date] || 0,
+          createdCount: createdMap[date] || 0,
+        })),
+    });
+  } catch (e) {
+    res.status(500).json({ message: "Calendar aggregation failed", error: e.message });
+  }
+});
+
 /* =================== Telecaller simple report (by date range) =================== */
 router.get("/report", protect, requireRole(1), async (req, res) => {
   try {
@@ -323,14 +411,17 @@ router.get("/report", protect, requireRole(1), async (req, res) => {
     const fromDate = parseDate(from) || new Date(Date.now() - 7 * 86400000);
     const toDate = parseDate(to) || new Date();
 
-    const agg = await Lead.aggregate([
-      {
-        $match: {
-          assignedTo: new mongoose.Types.ObjectId(req.user._id),
-          createdAt: { $gte: fromDate, $lte: toDate },
+    const [agg, customStatusList] = await Promise.all([
+      Lead.aggregate([
+        {
+          $match: {
+            assignedTo: new mongoose.Types.ObjectId(req.user._id),
+            createdAt: { $gte: fromDate, $lte: toDate },
+          },
         },
-      },
-      { $group: { _id: "$status", count: { $sum: 1 } } },
+        { $group: { _id: "$status", count: { $sum: 1 } } },
+      ]),
+      CustomStatus.find().sort({ order: 1, createdAt: 1 }).lean(),
     ]);
 
     const map = Object.fromEntries(agg.map((x) => [x._id, x.count]));
@@ -341,6 +432,11 @@ router.get("/report", protect, requireRole(1), async (req, res) => {
       followup: map.followup || 0,
       success: map.success || 0,
       failed: map.failed || 0,
+      customStatusCounts: customStatusList.map((s) => ({
+        slug: s.slug,
+        label: s.label,
+        count: map[s.slug] || 0,
+      })),
     });
   } catch (e) {
     res.status(500).json({ message: "Report error", error: e.message });

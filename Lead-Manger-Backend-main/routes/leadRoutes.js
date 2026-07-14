@@ -371,6 +371,7 @@ router.put("/:id", protect, async (req, res) => {
       "status",
       "reason",
       "followUpDate",
+      "journeyStage",
       "assignedTo",
       "leadType",
       "source",
