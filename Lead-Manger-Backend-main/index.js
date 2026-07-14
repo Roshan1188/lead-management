@@ -16,6 +16,9 @@ await connectDB();
 await seedStatusReasons();
 
 const app = express();
+// Vercel (and most PaaS) sit behind a reverse proxy that sets X-Forwarded-For;
+// trust it so express-rate-limit can correctly identify client IPs.
+if (process.env.VERCEL) app.set("trust proxy", 1);
 
 /* ------------------ Security Middlewares ------------------ */
 app.use(helmet());
