@@ -23,9 +23,14 @@ app.use(
   cors({
     origin: (origin, callback) => {
       const allowedOrigins = [
-        "https://lead-manager-frontend-ten.vercel.app", // ✅ your frontend URL
+        "https://lead-manager-frontend-app.vercel.app", // ✅ your frontend URL
       ];
-      if (!origin || allowedOrigins.includes(origin) || /^http:\/\/localhost:\d+$/.test(origin)) {
+      if (
+        !origin ||
+        allowedOrigins.includes(origin) ||
+        /^https:\/\/lead-manager-frontend-app(-[a-z0-9]+-roshanjoshi1188-9612s-projects)?\.vercel\.app$/.test(origin) ||
+        /^http:\/\/localhost:\d+$/.test(origin)
+      ) {
         return callback(null, true);
       }
       callback(new Error("Not allowed by CORS"));
