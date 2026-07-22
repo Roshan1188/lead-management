@@ -10,6 +10,7 @@ const VARIANTS: Record<string, { label: string; className: string }> = {
   followup: { label: 'Follow Up', className: 'bg-warning text-warning-foreground' },
   success: { label: 'Success', className: 'bg-success text-success-foreground' },
   failed: { label: 'Failed', className: 'bg-destructive text-destructive-foreground' },
+  interested: { label: 'Interested', className: 'bg-teal-500 text-white' },
 };
 
 export const StatusBadge = ({ status }: StatusBadgeProps) => {
