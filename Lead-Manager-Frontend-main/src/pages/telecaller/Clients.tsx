@@ -172,6 +172,7 @@ const getStatusBadgeClass = (status: string) => {
   if (status === 'followup') return 'bg-warning text-warning-foreground';
   if (status === 'success') return 'bg-success text-success-foreground';
   if (status === 'initialize') return 'bg-pending text-pending-foreground';
+  if (status === 'interested') return 'bg-teal-500 text-white';
   return 'bg-secondary text-secondary-foreground'; // custom top-level status
 };
 
